@@ -1,13 +1,18 @@
 // BOMB — plant / countdown / explode / defuse objective (Counter-Strike-STYLE).
-// The player plants with E inside a site; the bomb ticks 35 s, beeping faster
-// as it runs down; the nearest living Viper runs in to defuse it (5 s channel).
-// The integrator drives planting (startPlant/addPlant) and defusing (addDefuse)
-// and reads state/timer/progress off the returned object every step.
+// The player plants with E inside a site; the bomb ticks 40 s, beeping faster
+// as it runs down; the nearest living Viper runs in to defuse it (7 s channel,
+// 5 s with a defuse kit). The integrator drives planting (startPlant/addPlant)
+// and defusing (addDefuse) and reads state/timer/progress off the returned
+// object every step.
+//
+// Point Blank Bomb Mission numbers (best of 11): round 180 s, fuse 40 s,
+// defuse 7 s (5 s with kit), no respawn until the next round.
 import * as THREE from 'three';
 
-const PLANT_SECONDS = 3;   // hold E this long to plant
-const DEFUSE_SECONDS = 5;  // uninterrupted enemy channel to defuse
-const BOMB_TIMER = 35;     // seconds from plant to explosion
+export const PLANT_SECONDS = 3;   // hold E this long to plant
+export const DEFUSE_SECONDS = 7;  // uninterrupted enemy channel to defuse
+export const DEFUSE_KIT_SECONDS = 5; // defuse with a kit
+export const BOMB_TIMER = 40;     // seconds from plant to explosion
 const DEFUSE_DECAY = 0.5;  // defuse progress lost per second when not channelled
 
 // Site marker colours: A amber, B cyan — readable at a glance, distinct from
@@ -109,9 +114,11 @@ export function createBomb(scene, world) {
   }
 
   // Advance planting by dt; returns true the step the plant completes.
-  function addPlant(dt) {
+  // `seconds` is the channel length (3 s normally; 1.5 s with a defuse kit —
+  // the kit is the player's bomb tool, so it speeds the player's own plant).
+  function addPlant(dt, seconds = PLANT_SECONDS) {
     if (!planting || state.state !== 'idle') return false;
-    state.plantProgress = Math.min(1, state.plantProgress + dt / PLANT_SECONDS);
+    state.plantProgress = Math.min(1, state.plantProgress + dt / seconds);
     if (state.plantProgress < 1) return false;
     planting = false;
     const info = siteInfo(world, plantSite);
@@ -153,11 +160,12 @@ export function createBomb(scene, world) {
   // Advance enemy defuse by dt; returns true the step the defuse completes.
   // The integrator calls this once per step while a bot is channelling; progress
   // decays in update() when nobody channels, so a killed/interrupted defuser
-  // loses ground.
-  function addDefuse(dt) {
+  // loses ground. `seconds` is the channel length (7 s normally; 5 s when
+  // the defusing Viper carries a kit).
+  function addDefuse(dt, seconds = DEFUSE_SECONDS) {
     if (state.state !== 'planted') return false;
     defuseTouched = true;
-    state.defuseProgress = Math.min(1, state.defuseProgress + dt / DEFUSE_SECONDS);
+    state.defuseProgress = Math.min(1, state.defuseProgress + dt / seconds);
     if (state.defuseProgress < 1) return false;
     state.state = 'defused';
     state.defuseProgress = 1;

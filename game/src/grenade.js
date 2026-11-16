@@ -4,6 +4,11 @@
 // Damage falloff: 120 at 0 m -> 10 at 6 m, 0 beyond (GRENADE_RADIUS).
 // Fuse: 1.6 s after the FIRST bounce, or 2.2 s total from the throw,
 // whichever comes first.
+//
+// Kinds: 'frag' explodes (the event carries damage); 'smoke' pops a vision
+// blocking cloud that lives 8 s; 'flare' sticks a bright light that burns
+// 10 s. Smoke/flare events carry no damage — the integrator turns them into
+// clouds/lights through effects.js. All three share one physics pool.
 import * as THREE from 'three';
 
 export const GRENADE_RADIUS = 6;
@@ -14,6 +19,8 @@ export const GRENADE_GRAVITY = -16;
 export const GRENADE_BOUNCE_DAMP = 0.45;
 export const GRENADE_FUSE_AFTER_BOUNCE = 1.6;
 export const GRENADE_FUSE_TOTAL = 2.2;
+export const SMOKE_SECONDS = 8;
+export const FLARE_SECONDS = 10;
 const MAX_LIVE = 4;
 const BODY_RADIUS = 0.06;
 const STOP_SPEED = 1.2;
@@ -32,6 +39,9 @@ export function createGrenadeSim(scene) {
   const bodyGeo = new THREE.SphereGeometry(BODY_RADIUS, 12, 10);
   const bodyMat = new THREE.MeshStandardMaterial({ color: 0x3d5a2e, roughness: 0.55, metalness: 0.45 });
   const pinMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 0.35, metalness: 0.85 });
+  const smokeMat = new THREE.MeshStandardMaterial({ color: 0x8a8d90, roughness: 0.7, metalness: 0.2 });
+  const flareMat = new THREE.MeshStandardMaterial({ color: 0xd86a10, roughness: 0.5, metalness: 0.3, emissive: 0xcc5500, emissiveIntensity: 0.6 });
+  const kindMats = { frag: bodyMat, smoke: smokeMat, flare: flareMat };
   for (let i = 0; i < MAX_LIVE; i += 1) {
     const mesh = new THREE.Mesh(bodyGeo, bodyMat);
     const pin = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 0.05), pinMat);
@@ -40,7 +50,7 @@ export function createGrenadeSim(scene) {
     mesh.visible = false;
     scene.add(mesh);
     pool.push({
-      mesh, active: false, id: -1,
+      mesh, active: false, id: -1, kind: 'frag',
       pos: new THREE.Vector3(), vel: new THREE.Vector3(),
       age: 0, fuseAt: Infinity, bounced: false,
     });
@@ -49,9 +59,11 @@ export function createGrenadeSim(scene) {
   let nextSlot = 0;
   const tmpClosest = new THREE.Vector3();
 
-  function throwGrenade(origin, dir) {
+  function throwGrenade(origin, dir, kind = 'frag') {
     const g = pool[nextSlot];
     nextSlot = (nextSlot + 1) % MAX_LIVE;
+    g.kind = kind === 'smoke' || kind === 'flare' ? kind : 'frag';
+    g.mesh.material = kindMats[g.kind];
     g.pos.copy(origin);
     g.vel.copy(dir).normalize().multiplyScalar(GRENADE_THROW_SPEED);
     g.vel.y += 2.0; // slight lob so a level throw still arcs
@@ -131,13 +143,20 @@ export function createGrenadeSim(scene) {
       if (g.age >= g.fuseAt) {
         g.active = false;
         g.mesh.visible = false;
-        explosions.push({
-          pos: g.pos.clone(),
-          radius: GRENADE_RADIUS,
-          maxDamage: GRENADE_MAX_DAMAGE,
-          minDamage: GRENADE_MIN_DAMAGE,
-          damageAt: grenadeDamageAt,
-        });
+        if (g.kind === 'smoke') {
+          explosions.push({ kind: 'smoke', pos: g.pos.clone(), radius: 3.2, seconds: SMOKE_SECONDS });
+        } else if (g.kind === 'flare') {
+          explosions.push({ kind: 'flare', pos: g.pos.clone(), radius: 2, seconds: FLARE_SECONDS });
+        } else {
+          explosions.push({
+            kind: 'frag',
+            pos: g.pos.clone(),
+            radius: GRENADE_RADIUS,
+            maxDamage: GRENADE_MAX_DAMAGE,
+            minDamage: GRENADE_MIN_DAMAGE,
+            damageAt: grenadeDamageAt,
+          });
+        }
       }
     }
     return explosions;

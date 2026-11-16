@@ -147,6 +147,71 @@ export function createEffects(scene) {
     e.life = EXPLOSION_LIFE;
   }
 
+  // ------------------------------------------------- smoke + flare -------
+  // Smoke: a grey billow that blocks sight for 8 s. Three pooled spheres per
+  // cloud, semi-opaque so a bot (or the player) inside it cannot be seen
+  // through — the integrator also blocks bot LOS through live clouds.
+  // Flare: a hot orange orb + point light that burns 10 s, lighting a dark
+  // corner (and the bots in it). Both are pooled and fade out at the end.
+  const SMOKE_LIFE = 8;
+  const FLARE_LIFE = 10;
+  const smokes = [];
+  const cloudGeo = new THREE.SphereGeometry(1, 14, 10);
+  for (let i = 0; i < 3; i += 1) {
+    const group = new THREE.Group();
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x9aa0a3, transparent: true, opacity: 0, depthWrite: false,
+    });
+    const balls = [];
+    for (let s = 0; s < 3; s += 1) {
+      const b = new THREE.Mesh(cloudGeo, mat);
+      b.position.set((s - 1) * 1.1, 0.4 + s * 0.35, (s % 2 ? 0.7 : -0.6));
+      b.scale.setScalar(1.6);
+      group.add(b);
+      balls.push(b);
+    }
+    group.visible = false;
+    scene.add(group);
+    smokes.push({ group, mat, life: 0, max: SMOKE_LIFE });
+  }
+  let smokeNext = 0;
+
+  function smokeCloud(point) {
+    const s = smokes[smokeNext];
+    smokeNext = (smokeNext + 1) % smokes.length;
+    s.group.position.copy(point);
+    s.group.position.y = Math.max(0.2, point.y);
+    s.group.visible = true;
+    s.mat.opacity = 0.55; // visible from the first frame (step() animates the fade)
+    s.life = SMOKE_LIFE;
+  }
+
+  const flares = [];
+  const flareGeo = new THREE.SphereGeometry(0.16, 12, 10);
+  for (let i = 0; i < 2; i += 1) {
+    const group = new THREE.Group();
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffc861, transparent: true, opacity: 0 });
+    const orb = new THREE.Mesh(flareGeo, mat);
+    const light = new THREE.PointLight(0xffb347, 0, 16, 1.6);
+    light.position.y = 0.3;
+    group.add(orb, light);
+    group.visible = false;
+    scene.add(group);
+    flares.push({ group, mat, light, life: 0, max: FLARE_LIFE });
+  }
+  let flareNext = 0;
+
+  function flare(point) {
+    const f = flares[flareNext];
+    flareNext = (flareNext + 1) % flares.length;
+    f.group.position.copy(point);
+    f.group.position.y = Math.max(0.25, point.y + 0.15);
+    f.group.visible = true;
+    f.mat.opacity = 0.95; // lit from the first frame (step() animates the flicker)
+    f.light.intensity = 26;
+    f.life = FLARE_LIFE;
+  }
+
   // ------------------------------------------------------- enemy muzzles ---
   // Brief flash quad + light at a world position (for bot shots). Pooled
   // lights stay in the scene with intensity 0 when idle.
@@ -262,6 +327,22 @@ export function createEffects(scene) {
       if (m.life <= 0) { m.quad.visible = false; m.light.intensity = 0; m.mat.opacity = 0; }
       else { m.mat.opacity = 0.95 * (m.life / MUZZLE_LIFE); m.light.intensity = 14 * (m.life / MUZZLE_LIFE); }
     }
+    // Smoke: full opacity while young, fading in the last 2 s.
+    for (const s of smokes) {
+      if (s.life <= 0) continue;
+      s.life -= dt;
+      if (s.life <= 0) { s.group.visible = false; s.mat.opacity = 0; continue; }
+      s.mat.opacity = s.life < 2 ? 0.55 * (s.life / 2) : 0.55;
+    }
+    // Flare: steady burn with a small flicker, fading in the last 2 s.
+    for (const f of flares) {
+      if (f.life <= 0) continue;
+      f.life -= dt;
+      if (f.life <= 0) { f.group.visible = false; f.light.intensity = 0; f.mat.opacity = 0; continue; }
+      const fade = f.life < 2 ? f.life / 2 : 1;
+      f.mat.opacity = 0.95 * fade;
+      f.light.intensity = (26 + Math.sin(f.life * 23) * 4) * fade;
+    }
     // Dust: slow sink + sideways drift, wrap at the floor.
     for (let i = 0; i < DUST_COUNT; i += 1) {
       dustPos[i * 3 + 1] -= dustVel[i] * dt;
@@ -286,5 +367,5 @@ export function createEffects(scene) {
     }
   }
 
-  return { tracer, impact, explosion, muzzle, addSteam, step };
+  return { tracer, impact, explosion, muzzle, smokeCloud, flare, addSteam, step };
 }

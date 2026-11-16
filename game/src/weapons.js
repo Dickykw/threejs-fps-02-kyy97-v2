@@ -6,6 +6,17 @@ import { createGrenadeSim, GRENADE_MAX_DAMAGE, GRENADE_RADIUS } from './grenade.
 
 // ---------------------------------------------------------------- tuning ---
 export const GRENADE_PRICE = 400;
+export const ARMOUR_PRICE = 400;
+// The equipment shelf: price, pouch cap and hotkey per utility. Frag is the
+// old grenade (G); smoke blocks sight for 8 s (key 4); flare lights a dark
+// corner for 10 s (key 5); the kit is the bomb tool (see arsenal.hasKit).
+// Keys 1/2/3 stay weapon slots, so utility takes G/4/5 instead of 3/4/5.
+export const UTILITY_DEFS = {
+  frag: { name: 'Frag grenade', price: 400, max: 2, key: 'G' },
+  smoke: { name: 'Smoke grenade', price: 300, max: 2, key: '4' },
+  flare: { name: 'Flare', price: 200, max: 2, key: '5' },
+  kit: { name: 'Defuse Kit', price: 400, max: 1, key: '—' },
+};
 const MUZZLE_TIME = 0.06; // flash visible per shot (s)
 const MOVE_REFERENCE = 5.2; // m/s at which the moving-spread penalty maxes out
 const BASE_POS = { x: 0.24, y: -0.2, z: -0.42 }; // rifle/smg hip position (starter's)
@@ -15,7 +26,8 @@ export const DEFS = {
     name: 'Kestrel P9',
     price: 0,
     damage: 34,
-    headMult: 3.0,
+    headMult: 4.0, // Point Blank hitbox zones: head 4.0x
+    speed: 1.1, // weapon weight: pistol is light, moves faster than a rifle
     fireGap: 0.16,
     auto: false,
     mag: 12,
@@ -31,7 +43,8 @@ export const DEFS = {
     name: 'Longbow AR-7',
     price: 2700,
     damage: 30,
-    headMult: 3.4,
+    headMult: 4.0,
+    speed: 1.0, // heaviest gun: base walk speed
     fireGap: 0.096,
     auto: true,
     mag: 30,
@@ -47,7 +60,8 @@ export const DEFS = {
     name: 'Hornet VK-9',
     price: 1500,
     damage: 22,
-    headMult: 3.0,
+    headMult: 4.0,
+    speed: 1.05,
     fireGap: 0.07,
     auto: true,
     mag: 32,
@@ -58,6 +72,47 @@ export const DEFS = {
     kick: 0.042,
     // Deterministic spray: cos-based sideways sway, pitch grows with shot index.
     spray: { wave: 'cos', yawAmp: 0.009, yawFreq: 1.1, pitchBase: 0.011, pitchGrow: 0.0012 },
+  },
+  // Slot 3 — melee. No ammo: a swing never consumes a magazine. LMB slashes
+  // (40), RMB is a heavy stab (80). Range 2.2 m, flat damage (no zone mult).
+  knife: {
+    name: 'Combat Knife',
+    price: 0,
+    damage: 40,
+    heavyDamage: 80,
+    melee: true,
+    range: 2.2,
+    headMult: 1.0,
+    speed: 1.15, // lightest: the fastest move speed in the game
+    fireGap: 0.45,
+    heavyGap: 0.9,
+    auto: false,
+    mag: 1,
+    reserve: 0,
+    spreadStill: 0,
+    spreadMove: 0,
+    reloadTime: 0,
+    kick: 0.02,
+    spray: { wave: 'none', yawAmp: 0, yawFreq: 0, pitchBase: 0, pitchGrow: 0 },
+  },
+  // Slot 5 — the objective item. The attacker carries the charge; equipping
+  // it shows the C4 in hand, E plants it at a site. No ammo, no fire.
+  c4: {
+    name: 'C4 Charge',
+    price: 0,
+    damage: 0,
+    c4: true,
+    headMult: 1.0,
+    speed: 1.0,
+    fireGap: 0.5,
+    auto: false,
+    mag: 1,
+    reserve: 0,
+    spreadStill: 0,
+    spreadMove: 0,
+    reloadTime: 0,
+    kick: 0,
+    spray: { wave: 'none', yawAmp: 0, yawFreq: 0, pitchBase: 0, pitchGrow: 0 },
   },
 };
 
@@ -124,7 +179,7 @@ function createSfx() {
       else { noiseBurst(0.08, 2600, 0.45); blip(130, 0.07, 0.22); }
     },
     dry() { blip(900, 0.03, 0.12); },
-    // Hit confirmation tick: body hit is a mid tick, a 3x headshot is higher.
+    // Hit confirmation tick: body hit is a mid tick, a 4x headshot is higher.
     hit(head) { blip(head ? 2100 : 1400, 0.05, 0.18, 'sine'); },
     reload() { blip(500, 0.05, 0.1, 'triangle'); setTimeout(() => blip(700, 0.05, 0.1, 'triangle'), 180); },
   };
@@ -141,6 +196,7 @@ function buildMaterials() {
     metalLight: new THREE.MeshStandardMaterial({ color: 0x3a4048, roughness: 0.35, metalness: 0.7 }),
     polymer: new THREE.MeshStandardMaterial({ color: 0x141518, roughness: 0.85, metalness: 0.05 }),
     grip: new THREE.MeshStandardMaterial({ color: 0x2c323a, roughness: 0.9, metalness: 0.05 }),
+    glove: new THREE.MeshStandardMaterial({ color: 0x1e2126, roughness: 0.92, metalness: 0.02 }),
     wood: new THREE.MeshStandardMaterial({ color: 0x8a5a2e, roughness: 0.7, metalness: 0.05 }),
     woodDark: new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.75, metalness: 0.05 }),
     accent: new THREE.MeshStandardMaterial({ color: 0xf0a830, roughness: 0.5, metalness: 0.3 }),
@@ -180,6 +236,7 @@ function buildRifle(M) {
   g.add(box(M.metalLight, 0.03, 0.02, 0.05, 0.055, 0.01, -0.05)); // charging handle
   g.add(box(M.polymer, 0.06, 0.04, 0.16, 0, -0.045, -0.32)); // foregrip panel
   g.add(box(M.accent, 0.02, 0.02, 0.1, 0.045, 0.01, -0.2)); // amber side stripe
+  for (const part of buildArms(M, { x: 0, y: -0.09, z: 0.15 }, { x: 0, y: 0.0, z: -0.36 })) g.add(part);
   return { group: g, muzzle: new THREE.Vector3(0, 0.02, -0.8), base: { ...BASE_POS } };
 }
 
@@ -198,6 +255,7 @@ function buildSmg(M) {
   g.add(box(M.lens, 0.036, 0.028, 0.012, 0, 0.075, -0.065)); // red-dot lens
   g.add(box(M.metalLight, 0.014, 0.04, 0.014, 0, 0.07, -0.36)); // front sight
   g.add(box(M.accent, 0.02, 0.02, 0.08, 0.052, 0.01, -0.1)); // amber side stripe
+  for (const part of buildArms(M, { x: 0, y: -0.09, z: 0.13 }, { x: 0, y: 0.0, z: -0.26 })) g.add(part);
   return { group: g, muzzle: new THREE.Vector3(0, 0.015, -0.59), base: { ...BASE_POS } };
 }
 
@@ -212,11 +270,51 @@ function buildPistol(M) {
   g.add(box(M.metalLight, 0.01, 0.016, 0.01, 0, 0.042, -0.16)); // front sight
   g.add(box(M.metal, 0.008, 0.05, 0.09, 0, -0.055, -0.05)); // trigger guard
   g.add(box(M.metalLight, 0.012, 0.02, 0.04, 0, 0.01, -0.185)); // muzzle ring
+  // Two-handed pistol grip: right glove on the grip, left glove cupping under it.
+  for (const part of buildArms(M, { x: 0, y: -0.08, z: 0.07 }, { x: 0.01, y: -0.16, z: 0.05 })) g.add(part);
   // Pistol sits lower and closer to centre than the long guns.
   return { group: g, muzzle: new THREE.Vector3(0, 0.01, -0.23), base: { x: 0.1, y: -0.26, z: -0.38 } };
 }
 
-const BUILDERS = { rifle: buildRifle, smg: buildSmg, pistol: buildPistol };
+function buildKnife(M) {
+  const g = new THREE.Group();
+  g.add(box(M.metalLight, 0.016, 0.055, 0.3, 0, 0.01, -0.2)); // blade, flat and bright
+  g.add(box(M.metal, 0.02, 0.04, 0.05, 0, 0.01, -0.03)); // guard
+  g.add(box(M.grip, 0.035, 0.05, 0.13, 0, 0, 0.06, 0.15)); // handle, angled up
+  // One gloved hand on the handle, the other low in a ready stance.
+  for (const part of buildArms(M, { x: 0, y: -0.05, z: 0.08 }, { x: -0.02, y: -0.18, z: 0.02 })) g.add(part);
+  return { group: g, muzzle: new THREE.Vector3(0, 0.01, -0.36), base: { x: 0.16, y: -0.24, z: -0.36 } };
+}
+
+function buildC4(M) {
+  const g = new THREE.Group();
+  g.add(box(M.polymer, 0.17, 0.1, 0.13, 0, 0, 0)); // charge block
+  g.add(box(M.metalLight, 0.05, 0.03, 0.05, 0.05, 0.06, 0)); // detonator cap
+  g.add(box(M.accent, 0.02, 0.02, 0.14, -0.06, 0.02, 0.02, 0, 0.4)); // red wire
+  g.add(box(M.lens, 0.02, 0.02, 0.02, -0.05, 0.06, 0.04)); // blinking light
+  // Held in both gloved hands, low and centred.
+  for (const part of buildArms(M, { x: 0.05, y: -0.07, z: 0.05 }, { x: -0.05, y: -0.07, z: 0.05 })) g.add(part);
+  return { group: g, muzzle: new THREE.Vector3(0, 0, -0.2), base: { x: 0, y: -0.26, z: -0.34 } };
+}
+
+const BUILDERS = { rifle: buildRifle, smg: buildSmg, pistol: buildPistol, knife: buildKnife, c4: buildC4 };
+
+// ------------------------------------------------------- viewmodel arms ---
+// Point Blank-style hands: the rifle is never a floating gun. A gloved right
+// hand grips the pistol grip, a gloved left hand holds the handguard, and a
+// dark sleeve runs from each hand down off-screen. The arms are children of
+// the gun group, so they bob and kick with the weapon — including the small
+// recoil dip on every shot. `grip`/`hand` are gun-local positions.
+function buildArms(M, grip, hand) {
+  const parts = [];
+  const gloveR = box(M.glove, 0.075, 0.12, 0.09, grip.x, grip.y, grip.z, 0.25);
+  parts.push(gloveR);
+  parts.push(box(M.grip, 0.09, 0.09, 0.42, grip.x + 0.09, grip.y - 0.12, grip.z + 0.18, 0.65, -0.4));
+  const gloveL = box(M.glove, 0.07, 0.1, 0.11, hand.x, hand.y, hand.z);
+  parts.push(gloveL);
+  parts.push(box(M.grip, 0.085, 0.085, 0.4, hand.x - 0.1, hand.y - 0.22, hand.z + 0.28, 0.55, 0.5));
+  return parts;
+}
 
 // ---------------------------------------------------------------- arsenal ---
 export function createArsenal(camera, scene) {
@@ -266,7 +364,11 @@ export function createArsenal(camera, scene) {
   let lastMoveSpeed = 0;
   let bobPhase = 0;
   let aimLift = 0; // 0 hip .. 1 firing-held (slight raise, less bob)
-  let grenadeCount = 0;
+  // Utility pouch: frag / smoke / flare counts + one defuse kit. The kit is
+  // the player's bomb tool — carrying it plants the charge in 1.5 s instead
+  // of 3 s (the player is always the attacker, so the kit speeds the
+  // player's own bomb work); a Viper carrying a kit defuses in 2.5 s.
+  const utilityCounts = { frag: 0, smoke: 0, flare: 0, kit: 0 };
   let colliders = [];
   // Deterministic spray state: index of the next shot in the current burst.
   // Shot 0 is always perfectly accurate (zero kick, zero spread); the pattern
@@ -312,21 +414,37 @@ export function createArsenal(camera, scene) {
     shot.index = shotIndex;
     shot.kickPitch = 0;
     shot.kickYaw = 0;
+    // The C4 is not a weapon: pulling the trigger with it does nothing.
+    if (current.def.c4) return { fired: false, spread: shot.spread };
     if (!ready()) {
       if (current.mag === 0 && current.cooldown === 0 && current.reloadLeft === 0) sfx.dry();
       return { fired: false, spread: shot.spread };
     }
-    current.mag -= 1;
+    // Melee never consumes ammo and has no muzzle flash or gunshot: the
+    // swing is a kick + a shot event the integrator turns into a slash.
+    if (!current.def.melee) {
+      current.mag -= 1;
+      current.flash = MUZZLE_TIME;
+      sfx.shot(currentName);
+    }
     current.cooldown = current.def.fireGap;
-    current.flash = MUZZLE_TIME;
     current.kick = current.def.kick;
     const kick = sprayKick(shotIndex);
     shot.kickPitch = kick.pitch;
     shot.kickYaw = kick.yaw;
     shotIndex += 1;
-    sfx.shot(currentName);
     shot.fired = true;
     return { fired: true, spread: shot.spread };
+  }
+
+  // Heavy stab (RMB with the knife): a slower, harder swing. Returns false
+  // when not ready; the integrator runs the actual slash on true.
+  function heavy() {
+    if (!current.def.melee || !ready()) return false;
+    current.cooldown = current.def.heavyGap;
+    current.kick = current.def.kick * 2;
+    shotIndex = 0;
+    return true;
   }
 
   function switchTo(name) {
@@ -425,11 +543,19 @@ export function createArsenal(camera, scene) {
     advanceGrenades(dt);
   }
 
-  // --- grenades (sim lives in grenade.js; arsenal owns count + throw) ---
+  // --- grenades + utility (sim lives in grenade.js; arsenal owns counts) ---
   let pendingExplosions = [];
   function advanceGrenades(dt) {
     pendingExplosions = grenades.update(dt, colliders);
     return pendingExplosions;
+  }
+
+  function throwUtility(kind, origin, dir) {
+    if (!(kind in utilityCounts) || utilityCounts[kind] <= 0) return -1;
+    const id = grenades.throwGrenade(origin, dir, kind);
+    if (id < 0) return -1;
+    utilityCounts[kind] -= 1;
+    return id;
   }
 
   return {
@@ -448,6 +574,7 @@ export function createArsenal(camera, scene) {
       shotIndex = 0; // trigger up: the burst ends, the spray resets
     },
     tryFire,
+    heavy, // RMB heavy stab with the knife (false when not ready)
     reload,
     refillAll,
     step,
@@ -455,14 +582,22 @@ export function createArsenal(camera, scene) {
     ready,
     hitSound(head) { sfx.hit(head); },
     get shotIndex() { return shotIndex; },
-    get grenades() { return grenadeCount; },
-    addGrenade(n) { grenadeCount = Math.max(0, grenadeCount + n); },
+    get grenades() { return utilityCounts.frag; },
+    get utility() { return utilityCounts; },
+    utilityCount(kind) { return utilityCounts[kind] || 0; },
+    addUtility(kind, n) {
+      if (!(kind in utilityCounts)) return false;
+      utilityCounts[kind] = Math.max(0, utilityCounts[kind] + n);
+      return true;
+    },
+    clearUtility() {
+      for (const k of Object.keys(utilityCounts)) utilityCounts[k] = 0;
+    },
+    hasKit() { return utilityCounts.kit > 0; },
+    addGrenade(n) { utilityCounts.frag = Math.max(0, utilityCounts.frag + n); },
+    throwUtility,
     throwGrenade(origin, dir) {
-      if (grenadeCount <= 0) return -1;
-      const id = grenades.throwGrenade(origin, dir);
-      if (id < 0) return -1;
-      grenadeCount -= 1;
-      return id;
+      return throwUtility('frag', origin, dir);
     },
     setColliders(list) { colliders = list || []; },
     // Explicit grenade advance (returns [{ pos, radius, maxDamage, minDamage }]

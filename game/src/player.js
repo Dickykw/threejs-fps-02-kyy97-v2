@@ -2,6 +2,12 @@
 // as a box against the world's colliders one axis at a time, so a wall never
 // swallows the player. Feet and crown are lifted out of the horizontal tests,
 // so standing on the floor is never read as walking into a wall.
+//
+// SATSET: acceleration and stopping are deliberately snappy — ground accel
+// converges in ~3 frames and friction kills velocity in ~3 frames, so input
+// reads instantly instead of floating. Base speed scales with the equipped
+// weapon's weight (knife fastest, rifle slowest); Shift is a silent walk
+// (60% speed, steadier aim); crouch is slower still and tightens spread.
 import * as THREE from 'three';
 
 const RADIUS = 0.34;
@@ -11,9 +17,10 @@ const STAND_EYE = 1.6;
 const CROUCH_EYE = 1.02;
 const WALK_SPEED = 5.2;
 const CROUCH_SPEED = 2.4;
-const GROUND_ACCEL = 42;
-const AIR_ACCEL = 9;
-const FRICTION = 9;
+const SILENT_MULT = 0.6; // Shift: silent walk, 40% slower
+const GROUND_ACCEL = 110; // snappy: ~0.35 velocity blend per 60 Hz frame
+const AIR_ACCEL = 14; // some air control, still weaker than ground
+const FRICTION = 24; // snappy stop: ~3 frames from full speed to still
 const GRAVITY = 20;
 const JUMP_SPEED = 6.2;
 
@@ -26,6 +33,7 @@ export function createPlayer(colliders) {
     eye: STAND_EYE,
     onGround: true,
     crouching: false,
+    silent: false, // Shift held: silent walk (set every step)
     height: STAND_HEIGHT,
   };
   const probe = new THREE.Box3();
@@ -48,8 +56,10 @@ export function createPlayer(colliders) {
     player.yaw += yawKick;
   }
 
-  function step(dt, keys, analog) {
-    const crouching = keys.has('ControlLeft') || keys.has('ControlRight') || keys.has('KeyC') || (analog && analog.crouch);
+  // step(dt, keys, analog, speedMult): speedMult scales the walk speed by the
+  // equipped weapon's weight (knife 1.15, pistol 1.1, smg 1.05, rifle 1.0).
+  function step(dt, keys, analog, speedMult = 1) {
+    const crouching = keys.has('ControlLeft') || keys.has('ControlRight') || (analog && analog.crouch);
     if (crouching && !player.crouching) {
       player.crouching = true;
       player.height = CROUCH_HEIGHT;
@@ -57,6 +67,9 @@ export function createPlayer(colliders) {
       player.crouching = false;
       player.height = STAND_HEIGHT;
     }
+    // Silent walk (Shift): 40% slower, no footstep noise for the bots, and
+    // steadier aim — the integrator reads player.silent for the spread.
+    player.silent = keys.has('ShiftLeft') || keys.has('ShiftRight');
     const eyeTarget = player.crouching ? CROUCH_EYE : STAND_EYE;
     player.eye += (eyeTarget - player.eye) * Math.min(1, dt * 12);
 
@@ -76,7 +89,9 @@ export function createPlayer(colliders) {
       wish.set(-sin * forward + cos * strafe, 0, -cos * forward - sin * strafe).normalize();
     }
 
-    const speed = player.crouching ? CROUCH_SPEED : WALK_SPEED;
+    const speed = player.crouching
+      ? CROUCH_SPEED
+      : WALK_SPEED * speedMult * (player.silent ? SILENT_MULT : 1);
     const blend = Math.min(1, (player.onGround ? GROUND_ACCEL : AIR_ACCEL) * dt / speed);
     player.velocity.x += (wish.x * speed - player.velocity.x) * blend;
     player.velocity.z += (wish.z * speed - player.velocity.z) * blend;

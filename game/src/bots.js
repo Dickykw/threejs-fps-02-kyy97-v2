@@ -6,7 +6,15 @@
 // the dusk. Owns: bot models, AI state machine, LOS, shooting events, death
 // fall, defuse run. Does NOT import world.js — the world object is passed in
 // by the integrator.
+//
+// Support features (iteration 2): every bot has a name (Viper-1..5) and an
+// armour pool that absorbs half of incoming damage; from round 3 they buy
+// armour (50, then 100 from round 5) and from round 4 the two veterans carry
+// a defuse kit (2.5 s defuse instead of 5 s). Bots also talk: radio callouts
+// ("Contact at Site A", "Rotating to B", "Defusing") are queued by say() and
+// drained by the integrator via takeRadio(). Smoke clouds block their LOS.
 import * as THREE from 'three';
+import { zoneAt } from './zones.js';
 
 // ---------------------------------------------------------------- tuning ---
 const BOT_COUNT = 5;
@@ -51,6 +59,8 @@ const _tip = new THREE.Vector3();
 const _probe = new THREE.Box3();
 const _sep = new THREE.Vector3();
 const _ray = new THREE.Raycaster();
+const _smokeC = new THREE.Vector3();
+const _smokeSeg = new THREE.Vector3();
 const _events = []; // reused shot/defuse event array — consume synchronously
 
 // ------------------------------------------------------------ helpers -----
@@ -134,6 +144,14 @@ function buildAssets() {
 }
 
 // Build one humanoid (~1.75 m). Forward is +Z; yaw = atan2(dx, dz) faces a target.
+//
+// Point Blank-style carry: the rifle is mounted at the chest in BOTH hands,
+// barrel forward (+Z) — never a floating gun, never one-handed. The right
+// glove sits on the pistol grip, the left glove on the handguard; the arms
+// are posed to reach them (carry pose) and raise slightly when aiming.
+// The old mount parented the rifle to one arm and its barrel pointed at the
+// ground in the aim pose — this mount fixes that. Hit meshes are the same
+// objects as before (head / torso / limbs), so hitboxes do not change.
 function buildBotModel(assets, index) {
   const { g, m } = assets;
   // Per-bot clones of the materials a hit can strike: the emissive hit flash
@@ -179,12 +197,26 @@ function buildBotModel(assets, index) {
   pack.position.set(0, 1.1, -0.26);
   const belt = new THREE.Mesh(g.belt, m.gun);
   belt.position.y = 0.8;
+  // Pelvis / stomach hit zone: a hip block under the belt, slightly deeper
+  // than the torso (0.32 vs 0.28) so a frontal shot at hip height strikes it
+  // first. Point Blank hitbox zones: stomach 1.1x.
+  const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.16, 0.32), dark);
+  pelvis.position.y = 0.82;
   // Shoulder patch: bright team marker, reads instantly at range.
   const patch = new THREE.Mesh(g.patch, m.accent);
   patch.position.set(-0.2, 1.42, 0.16);
   patch.rotation.x = -0.15;
+  // Vest pouches + collar: the kit that makes the torso read as a soldier.
+  const pouchGeo = new THREE.BoxGeometry(0.12, 0.15, 0.06);
+  const pouchL = new THREE.Mesh(pouchGeo, vestDark);
+  pouchL.position.set(-0.12, 1.04, 0.2);
+  const pouchR = new THREE.Mesh(pouchGeo, vestDark);
+  pouchR.position.set(0.12, 1.04, 0.2);
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.09, 10), dark);
+  collar.position.y = 1.44;
 
-  // Head — skin sphere, dark helmet dome, bright stripe, glowing visor strip.
+  // Head — skin sphere, dark helmet dome, bright stripe, glowing visor strip,
+  // and a dark face mask under the visor.
   const head = new THREE.Mesh(g.head, skin);
   head.position.y = 1.6;
   const helmet = new THREE.Mesh(g.helmet, dark);
@@ -193,33 +225,48 @@ function buildBotModel(assets, index) {
   stripe.position.set(0, 1.76, 0);
   const visor = new THREE.Mesh(g.visor, m.accent);
   visor.position.set(0, 1.61, 0.115);
+  const mask = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.1, 0.06), m.dark);
+  mask.position.set(0, 1.54, 0.11);
 
-  // Arms — pivot at the shoulder (y 1.42). Right arm carries the rifle.
+  // Arms — pivot at the shoulder (y 1.42). Both reach forward to the rifle:
+  // the right glove on the pistol grip, the left glove on the handguard.
+  // Gloves are children of the arms so the hands track the rifle.
   const armL = new THREE.Mesh(g.arm, dark);
   armL.position.set(-0.3, 1.42, 0);
   const armR = new THREE.Mesh(g.arm, dark);
   armR.position.set(0.3, 1.42, 0);
+  const gloveGeo = new THREE.BoxGeometry(0.12, 0.11, 0.13);
+  const gloveL = new THREE.Mesh(gloveGeo, m.gun);
+  gloveL.position.set(0, -0.6, 0.03);
+  const gloveR = new THREE.Mesh(gloveGeo, m.gun);
+  gloveR.position.set(0, -0.6, 0.03);
+  armL.add(gloveL);
+  armR.add(gloveR);
 
-  // Rifle — held forward from the right hand; tip marker for tracer origin.
+  // Rifle — chest-mounted in both hands, barrel forward (+Z). Grip under the
+  // right glove, handguard under the left glove, stock against the shoulder.
+  const gunMount = new THREE.Group();
+  gunMount.position.set(0, 1.16, 0.3);
   const gun = new THREE.Group();
   const gunBody = new THREE.Mesh(g.gunBody, m.gun);
   const gunBarrel = new THREE.Mesh(g.gunBarrel, m.gunMetal);
-  gunBarrel.position.set(0, 0.01, -0.36);
+  gunBarrel.position.set(0, 0.01, 0.36);
   const gunMag = new THREE.Mesh(g.gunMag, m.gun);
   gunMag.position.set(0, -0.12, 0.02);
   const gunStock = new THREE.Mesh(g.gunStock, m.dark);
-  gunStock.position.set(0, 0, 0.3);
+  gunStock.position.set(0, 0, -0.3);
+  const handguard = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.07, 0.22), m.gunMetal);
+  handguard.position.set(0, 0.01, 0.22);
   const gunTip = new THREE.Object3D();
-  gunTip.position.set(0, 0.01, -0.52);
-  gun.add(gunBody, gunBarrel, gunMag, gunStock, gunTip);
-  gun.position.set(0, -0.56, 0.1);
-  armR.add(gun);
+  gunTip.position.set(0, 0.01, 0.52);
+  gun.add(gunBody, gunBarrel, gunMag, gunStock, handguard, gunTip);
+  gunMount.add(gun);
 
-  group.add(legL, legR, torso, shoulders, vestMesh, vestBack, pack, belt, patch,
-    head, helmet, stripe, visor, armL, armR);
+  group.add(legL, legR, torso, shoulders, vestMesh, vestBack, pack, belt, pelvis, patch,
+    pouchL, pouchR, collar, head, helmet, stripe, visor, mask, armL, armR, gunMount);
   group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
 
-  return { group, head, torso, gun, gunTip, armL, armR, legL, legR, flashMats, phase: index * 1.31 };
+  return { group, head, torso, pelvis, gun, gunTip, gunMount, armL, armR, legL, legR, flashMats, phase: index * 1.31 };
 }
 
 // -------------------------------------------------------------- factory ---
@@ -298,6 +345,17 @@ export function createBots(scene, world, listener = null) {
   let defuseProgress = 0; // 0..1, shared channel progress of the current defuser
   let defusingBot = null;
   let time = 0;
+  // Radio callouts: bots talk when something happens (contact, rotate,
+  // defuse, badly hurt). Queued here, drained by the integrator via
+  // takeRadio() — one queue for both AI events and damage() lines.
+  const radioQueue = [];
+  function say(text) {
+    if (radioQueue.length > 8) radioQueue.shift();
+    radioQueue.push(text);
+  }
+  function zoneOf(pos) {
+    return zoneAt(pos, { pos: siteA, radius: 6 }, { pos: siteB, radius: 6 });
+  }
 
   for (let i = 0; i < BOT_COUNT; i += 1) {
     const model = buildBotModel(assets, i);
@@ -306,11 +364,13 @@ export function createBots(scene, world, listener = null) {
     scene.add(model.group);
 
     const bot = {
+      name: `Viper-${i + 1}`,
       group: model.group,
       head: model.head,
       torso: model.torso,
       gun: model.gun,
       gunTip: model.gunTip,
+      gunMount: model.gunMount,
       armL: model.armL,
       armR: model.armR,
       legL: model.legL,
@@ -321,6 +381,9 @@ export function createBots(scene, world, listener = null) {
       stepAudio: null, // PositionalAudio: footsteps (null without a listener)
       lastStepPhase: Math.floor(model.phase / Math.PI),
       health: BOT_HEALTH,
+      armour: 0, // absorbs half of incoming damage until gone (bought from round 3)
+      hasKit: false, // defuse kit: defuses in 5 s instead of 7 s (round 4+ veterans)
+      lowCalled: false, // low-HP radio line said once per life
       alive: true,
       state: 'patrol',
       pos: model.group.position, // same reference as group.position
@@ -364,10 +427,12 @@ export function createBots(scene, world, listener = null) {
       } catch { bot.shotAudio = null; bot.stepAudio = null; }
     }
 
-    // Hit registration: head / torso / limb. The integrator raycasts hitMeshes
-    // and passes the struck mesh to damage(); damage() no-ops on dead bots.
+    // Hit registration: head / torso / stomach / limb (Point Blank hitbox
+    // zones — head 4.0x, chest 1.0x, stomach 1.1x, arms & legs 0.75x). The
+    // integrator raycasts hitMeshes and passes the struck mesh to damage();
+    // damage() no-ops on dead bots.
     for (const [mesh, part] of [
-      [model.head, 'head'], [model.torso, 'torso'],
+      [model.head, 'head'], [model.torso, 'torso'], [model.pelvis, 'stomach'],
       [model.armL, 'limb'], [model.armR, 'limb'],
       [model.legL, 'limb'], [model.legR, 'limb'],
     ]) {
@@ -414,7 +479,10 @@ export function createBots(scene, world, listener = null) {
   }
 
   // --------------------------------------------------------------- LOS ----
-  function hasLOS(bot, playerPos, dist) {
+  // Smoke clouds block sight too: if the head-to-chest segment passes within
+  // a live cloud's radius, the bot cannot see the player (same rule the
+  // player's own eyes get from the rendered cloud).
+  function hasLOS(bot, playerPos, dist, smokeClouds) {
     if (dist > SIGHT_RANGE) return false;
     _head.set(bot.pos.x, bot.pos.y + 1.55, bot.pos.z);
     _chest.copy(playerPos);
@@ -429,7 +497,20 @@ export function createBots(scene, world, listener = null) {
     _ray.set(_head, _dir);
     _ray.far = d;
     const hit = _ray.intersectObjects(shootables, false)[0];
-    return !hit || hit.distance >= d - 0.15;
+    if (hit && hit.distance < d - 0.15) return false;
+    for (const c of smokeClouds || []) {
+      _smokeC.set(c.x, 1.2, c.z);
+      _smokeSeg.copy(_smokeC).sub(_head);
+      const t = Math.max(0, Math.min(1, _smokeSeg.dot(_toPlayer) / (d * d)));
+      const cx = _head.x + _toPlayer.x * t;
+      const cy = _head.y + _toPlayer.y * t;
+      const cz = _head.z + _toPlayer.z * t;
+      const dx = _smokeC.x - cx;
+      const dy = _smokeC.y - cy;
+      const dz = _smokeC.z - cz;
+      if (dx * dx + dy * dy + dz * dz < c.r * c.r) return false;
+    }
+    return true;
   }
 
   // ------------------------------------------------------------ shooting --
@@ -463,6 +544,12 @@ export function createBots(scene, world, listener = null) {
   }
 
   // ---------------------------------------------------------- animation ---
+  // Two-hand carry poses (radians). CARRY is the patrol/hold walk: both
+  // gloves on the rifle, barrel forward. AIM raises the rifle a touch for
+  // engage/defuse. Legs swing with the stride in both; arms sway a little
+  // while walking so the carry still reads as a walk, not a statue.
+  const POSE_CARRY = { armR: -1.05, armL: -1.3, mount: 0 };
+  const POSE_AIM = { armR: -1.22, armL: -1.48, mount: -0.07 };
   function animateWalk(bot, dt, moving) {
     if (moving) bot.walkPhase += dt * bot.speed * 2.4;
     // A footstep tick each half-stride, from the bot's own position.
@@ -474,21 +561,17 @@ export function createBots(scene, world, listener = null) {
       }
     }
     const swing = moving ? Math.sin(bot.walkPhase) * 0.55 : 0;
-    const armSwing = moving ? Math.sin(bot.walkPhase) * 0.35 : 0;
-    if (bot.state === 'engage' || bot.state === 'defuse') {
-      // Aim pose: rifle raised, both arms forward on the gun.
-      bot.armR.rotation.x += (-1.45 - bot.armR.rotation.x) * Math.min(1, dt * 10);
-      bot.armL.rotation.x += (-1.15 - bot.armL.rotation.x) * Math.min(1, dt * 10);
-      bot.armL.rotation.z = 0.35;
-      bot.legL.rotation.x = swing * 0.5;
-      bot.legR.rotation.x = -swing * 0.5;
-    } else {
-      bot.armR.rotation.x = -armSwing;
-      bot.armL.rotation.x = armSwing;
-      bot.armL.rotation.z = 0;
-      bot.legL.rotation.x = swing;
-      bot.legR.rotation.x = -swing;
-    }
+    const armSway = moving ? Math.sin(bot.walkPhase) * 0.07 : 0;
+    const aiming = bot.state === 'engage' || bot.state === 'defuse';
+    const pose = aiming ? POSE_AIM : POSE_CARRY;
+    const k = Math.min(1, dt * 10);
+    bot.armR.rotation.x += ((pose.armR + armSway) - bot.armR.rotation.x) * k;
+    bot.armL.rotation.x += ((pose.armL - armSway) - bot.armL.rotation.x) * k;
+    bot.armR.rotation.z += (-0.42 - bot.armR.rotation.z) * k; // glove to the grip
+    bot.armL.rotation.z += (0.42 - bot.armL.rotation.z) * k; // glove to the handguard
+    bot.gunMount.rotation.x += (pose.mount - bot.gunMount.rotation.x) * k;
+    bot.legL.rotation.x = swing;
+    bot.legR.rotation.x = -swing;
   }
 
   function animateFall(bot, dt) {
@@ -533,7 +616,7 @@ export function createBots(scene, world, listener = null) {
       if (!bot.alive) { animateFall(bot, dt); continue; }
 
       const dist = playerPos ? bot.pos.distanceTo(playerPos) : Infinity;
-      const sees = !!(ctx.playerAlive && playerPos && hasLOS(bot, playerPos, dist));
+      const sees = !!(ctx.playerAlive && playerPos && hasLOS(bot, playerPos, dist, ctx.smokeClouds));
 
       if (sees) {
         bot.lastSeen.copy(playerPos);
@@ -543,6 +626,7 @@ export function createBots(scene, world, listener = null) {
           bot.hasSeen = true;
           bot.reactionAt = time + rand(REACTION_MIN, REACTION_MAX);
           bot.shootCooldown = bot.reactionAt;
+          say(`${bot.name}: Contact at ${zoneOf(playerPos)}`);
         }
         if (bot.state !== 'engage') bot.state = 'engage';
       } else {
@@ -554,6 +638,7 @@ export function createBots(scene, world, listener = null) {
             bot.state = 'investigate';
             bot.investigateAt = bot.lastSeen.clone();
             bot.investigateTimer = 0;
+            say(`${bot.name}: Rotating to ${zoneOf(bot.lastSeen)}`);
           }
         }
       }
@@ -631,7 +716,11 @@ export function createBots(scene, world, listener = null) {
           } else {
             // On the bomb: stand on it and channel. Facing outward, gun up.
             faceToward(bot, bot.pos.x + Math.sin(bot.yaw), bot.pos.z + Math.cos(bot.yaw), dt, 2);
-            if (defusingBot !== bot) { defusingBot = bot; defuseProgress = 0; }
+            if (defusingBot !== bot) {
+              defusingBot = bot;
+              defuseProgress = 0;
+              say(bot.hasKit ? `${bot.name}: Kit out, defusing fast` : `${bot.name}: Defusing the charge`);
+            }
             defuseProgress = Math.min(1, defuseProgress + dt / DEFUSE_SECONDS);
             _events.push({ defusing: true, progress: defuseProgress, bot });
           }
@@ -729,11 +818,24 @@ export function createBots(scene, world, listener = null) {
   function damage(mesh, amount) {
     const bot = mesh && mesh.userData ? mesh.userData.bot : null;
     if (!bot || !bot.alive) return { killed: false, bot: null };
-    bot.health -= amount;
+    // Armour absorbs half the hit until it is gone; the rest hits health.
+    let rest = amount;
+    if (bot.armour > 0) {
+      const absorbed = Math.min(bot.armour, rest * 0.5);
+      bot.armour -= absorbed;
+      rest -= absorbed;
+    }
+    bot.health -= rest;
     // Hit confirmation: this bot's materials flash amber for 90 ms.
     bot.flash = 0.09;
     for (const mat of bot.flashMats) mat.emissiveIntensity = 0.85;
-    if (bot.health > 0) return { killed: false, bot };
+    if (bot.health > 0) {
+      if (bot.health < 30 && !bot.lowCalled) {
+        bot.lowCalled = true;
+        say(`${bot.name}: I'm hit — backup at ${zoneOf(bot.pos)}`);
+      }
+      return { killed: false, bot };
+    }
     bot.health = 0;
     bot.alive = false;
     bot.fall = 0;
@@ -743,13 +845,19 @@ export function createBots(scene, world, listener = null) {
   }
 
   // --------------------------------------------------------------- reset --
-  function reset() {
+  // Round N: Vipers buy armour from round 3 (50, then 100 from round 5) and
+  // the two veterans carry a defuse kit from round 4 — same economy pressure
+  // the player faces, deterministic per round.
+  function reset(round = 1) {
     defuseProgress = 0;
     defusingBot = null;
     time = 0;
     for (let i = 0; i < bots.length; i += 1) {
       const bot = bots[i];
       bot.health = BOT_HEALTH;
+      bot.armour = round >= 5 ? 100 : round >= 3 ? 50 : 0;
+      bot.hasKit = round >= 4 && (i === 0 || i === 1);
+      bot.lowCalled = false;
       bot.alive = true;
       bot.state = 'patrol';
       bot.fall = 0;
@@ -804,6 +912,13 @@ export function createBots(scene, world, listener = null) {
     reset,
     aliveCount,
     setObjective,
+    // Radio callouts queued since the last drain (contact / rotate /
+    // defuse / low-HP lines). The integrator drains these every step and
+    // shows them on the radio log.
+    takeRadio() {
+      if (!radioQueue.length) return radioQueue;
+      return radioQueue.splice(0, radioQueue.length);
+    },
     // Live defuse channel state: 0..1 while a bot channels, 0 when nobody
     // is defusing; the defusing bot itself, or null.
     get defuseProgress() { return defuseProgress; },

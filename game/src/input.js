@@ -1,6 +1,8 @@
 // Keyboard + mouse (pointer lock) and full touch controls for phones.
-// Desktop: pointer-lock mouse look, WASD, click fire, R reload, Space jump,
-// Ctrl/C crouch, 1/2/3 weapons, G grenade, E plant, B buy menu.
+// Desktop: pointer-lock mouse look, WASD, click fire, RMB heavy stab (knife),
+// R reload, Space jump, Ctrl crouch, Shift silent walk, 1/2/3/4/5 spec
+// slots (1 primary, 2 secondary, 3 knife, 4 cycle tactical, 5 C4), G throw
+// tactical, Q quick-switch, Z/X/C radio, E plant, B buy menu.
 // Touch: virtual joystick (bottom left) for movement, drag on the right half
 // to look, on-screen buttons: FIRE, RELOAD, JUMP, CROUCH, weapon switch,
 // GRENADE, PLANT. The touch UI is built here and shown on touch devices;
@@ -16,7 +18,7 @@ export function createInput(canvas, onLockChange) {
     move: { x: 0, y: 0 },
     isTouch: false,
   };
-  const actions = []; // one-shot actions for main.js to drain: reload, grenade, w1, w2, w3, buy
+  const actions = []; // one-shot actions for main.js to drain: reload, grenade, tactical, c4, w1..w3, quickswitch, heavy, radio-*, wnext, buy
 
   function setKey(event, down) {
     if (down) keys.add(event.code);
@@ -30,11 +32,16 @@ export function createInput(canvas, onLockChange) {
     if (event.code === 'Tab') event.preventDefault(); // TAB holds the scoreboard; never move focus
     if (event.code === 'KeyR') actions.push('reload');
     if (event.code === 'KeyG') actions.push('grenade');
+    if (event.code === 'Digit4') actions.push('tactical'); // cycle Frag/Smoke/Flare
+    if (event.code === 'Digit5') actions.push('c4'); // equip the C4 charge
     if (event.code === 'Digit1') actions.push('w1');
     if (event.code === 'Digit2') actions.push('w2');
     if (event.code === 'Digit3') actions.push('w3');
     if (event.code === 'KeyB') actions.push('buy');
-    if (event.code === 'KeyQ') actions.push('wnext');
+    if (event.code === 'KeyQ') actions.push('quickswitch'); // last weapon, cancels reload
+    if (event.code === 'KeyZ') actions.push('radio-follow'); // "Follow me"
+    if (event.code === 'KeyX') actions.push('radio-cover'); // "Cover me"
+    if (event.code === 'KeyC') actions.push('radio-spotted'); // "Enemy spotted"
   });
   window.addEventListener('keyup', (event) => setKey(event, false));
   window.addEventListener('blur', () => {
@@ -50,10 +57,12 @@ export function createInput(canvas, onLockChange) {
   });
   window.addEventListener('mousedown', (event) => {
     if (state.locked && event.button === 0) state.firing = true;
+    if (state.locked && event.button === 2) actions.push('heavy'); // RMB: heavy knife stab
   });
   window.addEventListener('mouseup', (event) => {
     if (event.button === 0) state.firing = false;
   });
+  canvas.addEventListener('contextmenu', (event) => event.preventDefault()); // RMB is the heavy stab, not a menu
   document.addEventListener('pointerlockchange', () => {
     state.locked = document.pointerLockElement === canvas;
     if (!state.locked) {
@@ -180,8 +189,10 @@ export function createInput(canvas, onLockChange) {
     bindButton('btn-fire', () => { state.firing = true; }, () => { state.firing = false; });
     bindButton('btn-reload', () => actions.push('reload'));
     bindButton('btn-jump', () => keys.add('Space'), () => keys.delete('Space'));
-    bindButton('btn-crouch', () => keys.add('KeyC'), () => keys.delete('KeyC'));
+    bindButton('btn-crouch', () => keys.add('ControlLeft'), () => keys.delete('ControlLeft'));
     bindButton('btn-grenade', () => actions.push('grenade'));
+    bindButton('btn-smoke', () => actions.push('tactical')); // cycle Frag/Smoke/Flare
+    bindButton('btn-flare', () => actions.push('c4')); // equip the C4 charge
     bindButton('btn-plant', () => keys.add('KeyE'), () => keys.delete('KeyE'));
     bindButton('btn-w1', () => actions.push('w1'));
     bindButton('btn-w2', () => actions.push('w2'));

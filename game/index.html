@@ -63,6 +63,17 @@
   #hitmarker i:nth-child(3) { top: 12px; left: 0; height: 2px; width: 8px; }
   #hitmarker i:nth-child(4) { top: 12px; right: 0; height: 2px; width: 8px; }
 
+  /* Damage direction arc: a red arc around the crosshair, rotated toward
+     the attacker (hud.damageArc sets --rot). Hidden unless .on. */
+  #dmg-arc {
+    position: fixed; left: 50%; top: 50%; width: 200px; height: 200px;
+    margin: -100px 0 0 -100px; border-radius: 50%; pointer-events: none;
+    border: 4px solid transparent; border-top-color: var(--danger);
+    opacity: 0; transform: rotate(var(--rot, 0deg));
+    transition: opacity 300ms linear;
+  }
+  #dmg-arc.on { opacity: .9; }
+
   /* Bottom-right ammo panel. */
   #ammo-panel {
     position: fixed; right: 24px; bottom: 24px;
@@ -70,6 +81,16 @@
     background: var(--panel); border: 1px solid var(--panel-border);
     border-radius: var(--radius-panel); text-align: right;
   }
+  /* Equipment slots under the ammo: weapon slots 1/2/3 + utility pouch. */
+  #slots { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+  #slots .slot {
+    font-family: var(--font-readout); font-size: 11px; letter-spacing: .04em;
+    color: var(--ink); background: rgba(255,255,255,.06);
+    border: 1px solid var(--panel-border); border-radius: 3px; padding: 3px 6px;
+  }
+  #slots .slot.locked { opacity: .38; }
+  #slots .slot.active { border-color: var(--accent); color: var(--accent); }
+  #slots .slot.util { color: var(--muted); }
   #ammo {
     display: flex; align-items: baseline; gap: 8px; justify-content: flex-end;
     font-family: var(--font-readout); font-size: 52px; line-height: 1;
@@ -100,6 +121,48 @@
   #health-fill.low { background: var(--danger); }
   #health-label { font-size: 11px; letter-spacing: .12em; color: var(--muted); text-transform: uppercase; margin-top: 4px; }
 
+  /* Armour row under health: its own bar + number; +CAP when the vest is full. */
+  #armour-row { margin-top: 8px; }
+  #armour-row[hidden] { display: none; }
+  #armour-bar { height: 6px; background: var(--hairline); border-radius: 3px; overflow: hidden; }
+  #armour-fill { height: 100%; width: 0%; background: #4aa8ff; transition: width 120ms linear; }
+  #armour-line { margin-top: 4px; font-family: var(--font-readout); font-size: 12px; color: #9cc8ff; letter-spacing: .08em; }
+  #armour-num { font-size: 16px; color: var(--ink); }
+  #armour-cap { display: none; color: var(--accent); font-weight: 700; margin-left: 6px; }
+  #armour-row.full #armour-cap { display: inline; }
+
+  /* Radio log (bottom-left, above health): Viper callouts, newest on top. */
+  #radio {
+    position: fixed; left: 24px; bottom: 148px; width: 300px;
+    display: grid; gap: 4px;
+    font-family: var(--font-readout); font-size: 12px; color: #ffd9a0;
+    text-shadow: 0 1px 4px rgba(0,0,0,.8);
+  }
+  #radio .radio-line {
+    padding: 3px 8px; background: var(--panel);
+    border: 1px solid var(--panel-border); border-left: 3px solid var(--accent);
+    border-radius: 3px;
+  }
+
+  /* Notification feed (top-left, directly under the minimap): match events.
+     Kill white, headshot yellow, bomb red/orange, round cyan, assist teal. */
+  #notify {
+    position: fixed; top: 180px; left: 24px; width: 300px;
+    display: grid; gap: 4px; z-index: 3;
+    font-family: var(--font-readout); font-size: 12px; line-height: 1.35;
+    text-shadow: 0 1px 4px rgba(0,0,0,.8);
+  }
+  #notify .n-line {
+    padding: 4px 8px; background: var(--panel);
+    border: 1px solid var(--panel-border); border-left: 3px solid #fff;
+    border-radius: 3px; color: var(--ink);
+  }
+  #notify .n-kill { border-left-color: #f2ead9; }
+  #notify .n-head { border-left-color: var(--accent); color: #ffd27a; }
+  #notify .n-bomb { border-left-color: var(--danger); color: #ffb199; }
+  #notify .n-round { border-left-color: #35c4dc; color: #9be7f5; }
+  #notify .n-assist { border-left-color: var(--ally); color: #8fe3d8; }
+
   #score {
     position: fixed; left: 24px; bottom: 118px;
     font-family: var(--font-readout); font-size: 14px; color: var(--muted);
@@ -120,6 +183,9 @@
   #topbar .team { font-size: 12px; font-weight: 700; letter-spacing: .1em; }
   #topbar .team.you { color: var(--ally); }
   #topbar .team.foe { color: var(--danger); }
+  #round-label { font-size: 12px; font-weight: 700; letter-spacing: .1em; color: var(--muted); }
+  #alive { font-size: 11px; letter-spacing: .12em; color: var(--muted); }
+  #alive::first-letter { color: var(--danger); }
   #round-score { font-size: 22px; color: var(--ink); letter-spacing: .05em; }
   #timer { font-size: 22px; color: var(--ink); }
   #timer.low { color: var(--danger); }
@@ -193,6 +259,13 @@
     pointer-events: auto;
   }
   .overlay[hidden] { display: none; }
+  /* Match-end screens: VICTORY / DEFEAT / DRAW read big, not like a round panel. */
+  .overlay.match-end .panel { text-align: center; }
+  .overlay.match-end .panel h1 { font-size: 56px; font-weight: 700; letter-spacing: .06em; }
+  .overlay.match-end .panel p { max-width: none; }
+  .overlay.win .panel h1 { color: var(--ally); }
+  .overlay.lose .panel h1 { color: var(--danger); }
+  .overlay.tied .panel h1 { color: var(--accent); }
   .panel {
     width: min(460px, 100%); padding: 32px;
     background: var(--surface); border: 1px solid var(--hairline);
@@ -315,6 +388,9 @@
   #btn-crouch { right: 118px; bottom: 164px; width: 56px; height: 56px; }
   #btn-reload { right: 30px; bottom: 210px; width: 56px; height: 56px; }
   #btn-grenade { right: 96px; bottom: 232px; width: 52px; height: 52px; }
+  #btn-smoke, #btn-flare { width: 44px; height: 44px; border-radius: 8px; top: 64px; }
+  #btn-smoke { right: 200px; }
+  #btn-flare { right: 250px; }
   #btn-plant { right: 160px; bottom: 232px; width: 52px; height: 52px; }
   #btn-w1, #btn-w2, #btn-w3 { width: 44px; height: 44px; border-radius: 8px; top: 64px; }
   #btn-w1 { right: 150px; }
@@ -340,6 +416,8 @@
     #minimap-wrap { display: none; }
     #bomb-status { top: 48px; font-size: 12px; }
     #feed { display: none; }
+    #notify { display: none; }
+    #radio { display: none; }
     #banner-title { font-size: 34px; }
     .panel { padding: 22px; }
     .panel h1 { font-size: 26px; }
@@ -359,22 +437,30 @@
 <div id="hud" aria-hidden="true">
   <div id="crosshair"><i></i><i></i><i></i><i></i><b></b></div>
   <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+  <div id="dmg-arc"></div>
   <div id="minimap-wrap"><canvas id="minimap" width="168" height="128"></canvas><div id="map-label">DUSTY YARD</div></div>
-  <div id="topbar"><span class="team you">DUSTY</span><span id="phase">MENU</span><span id="round-score">0 — 0</span><span id="timer">1:40</span><span class="team foe">VIPERS</span></div>
+  <div id="notify"></div>
+  <div id="topbar"><span class="team you">DUSTY · ATTACK</span><span id="phase">MENU</span><span id="round-label">ROUND 1 / 11</span><span id="round-score">0 — 0</span><span id="timer">3:00</span><span id="alive">●●●●● · ● YOU</span><span class="team foe">VIPERS · DEFENSE</span></div>
   <div id="money">$800</div>
   <div id="bomb-status" hidden></div>
   <div id="bomb-bar" hidden><div id="bomb-fill"></div></div>
-  <div id="plant" hidden>PLANTING<div id="plant-bar"><div id="plant-fill"></div></div></div>
+  <div id="plant" hidden><span id="plant-label">PLANTING</span><div id="plant-bar"><div id="plant-fill"></div></div></div>
   <div id="feed"></div>
   <div id="health-panel">
     <div id="health-num">100</div>
     <div id="health-bar"><div id="health-fill"></div></div>
     <div id="health-label">Health</div>
+    <div id="armour-row" hidden>
+      <div id="armour-bar"><div id="armour-fill"></div></div>
+      <div id="armour-line"><span id="armour-num">0</span> ARMOUR<span id="armour-cap">+CAP</span></div>
+    </div>
   </div>
   <div id="score">Score <b id="score-value">0</b></div>
+  <div id="radio"></div>
   <div id="ammo-panel">
     <div id="weapon-name">Kestrel P9</div>
     <div id="ammo"><span id="ammo-mag">12</span><span id="ammo-reserve">/ 36</span></div>
+    <div id="slots"></div>
   </div>
 </div>
 
@@ -382,7 +468,7 @@
   <div class="buy-head">
     <div>
       <h2>Buy phase</h2>
-      <p class="sub">Round starts soon. Spend <b id="buy-money">$800</b> — click or press 1–4.</p>
+      <p class="sub">Round starts soon. Spend <b id="buy-money">$800</b> — click to buy. Slots: 1 Primary · 2 Secondary · 3 Knife · 4 Tactical · 5 C4.</p>
     </div>
     <div class="buy-ring-wrap">
       <svg id="buy-ring" viewBox="0 0 44 44" width="44" height="44" aria-hidden="true">
@@ -395,7 +481,13 @@
   <button class="buy-item" id="buy-rifle" type="button">Longbow AR-7 — $2700</button>
   <button class="buy-item" id="buy-smg" type="button">Hornet VK-9 — $1500</button>
   <button class="buy-item" id="buy-pistol" type="button">Kestrel P9 — owned</button>
+  <button class="buy-item" id="buy-knife" type="button">Combat Knife — standard issue</button>
+  <button class="buy-item" id="buy-c4" type="button">C4 Charge — objective item</button>
+  <button class="buy-item" id="buy-armour" type="button">Armour — $400</button>
   <button class="buy-item" id="buy-grenade" type="button">Frag grenade — $400</button>
+  <button class="buy-item" id="buy-smoke" type="button">Smoke grenade — $300</button>
+  <button class="buy-item" id="buy-flare" type="button">Flare — $200</button>
+  <button class="buy-item" id="buy-kit" type="button">Defuse Kit — $400</button>
   <button id="buy-start" type="button">Start round</button>
 </div>
 
@@ -407,6 +499,8 @@
   <button class="tbtn" id="btn-crouch" type="button">CRCH</button>
   <button class="tbtn" id="btn-reload" type="button">RLD</button>
   <button class="tbtn" id="btn-grenade" type="button">Nade</button>
+  <button class="tbtn" id="btn-smoke" type="button">TAC</button>
+  <button class="tbtn" id="btn-flare" type="button">C4</button>
   <button class="tbtn" id="btn-plant" type="button">Plant</button>
   <button class="tbtn" id="btn-w1" type="button">1</button>
   <button class="tbtn" id="btn-w2" type="button">2</button>
@@ -422,9 +516,9 @@
     <ul class="keys" id="keys-desktop">
       <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</li>
       <li><kbd>Mouse</kbd> Look &nbsp;·&nbsp; <kbd>Click</kbd> Fire</li>
-      <li><kbd>R</kbd> Reload &nbsp;·&nbsp; <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> Weapons &nbsp;·&nbsp; <kbd>G</kbd> Grenade</li>
-      <li><kbd>E</kbd> Plant / defuse &nbsp;·&nbsp; <kbd>B</kbd> Buy menu</li>
-      <li><kbd>Ctrl</kbd> Crouch &nbsp;·&nbsp; <kbd>Space</kbd> Jump</li>
+      <li><kbd>R</kbd> Reload &nbsp;·&nbsp; <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><kbd>5</kbd> Slots &nbsp;·&nbsp; <kbd>G</kbd> Throw tactical &nbsp;·&nbsp; <kbd>Q</kbd> Quick-switch</li>
+      <li><kbd>E</kbd> Plant / defuse &nbsp;·&nbsp; <kbd>B</kbd> Buy menu &nbsp;·&nbsp; <kbd>Shift</kbd> Silent walk</li>
+      <li><kbd>Ctrl</kbd> Crouch &nbsp;·&nbsp; <kbd>Space</kbd> Jump &nbsp;·&nbsp; <kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd> Radio</li>
     </ul>
     <ul class="keys" id="keys-touch" hidden>
       <li>Left stick — Move</li>
@@ -439,6 +533,7 @@
   <h3>SCOREBOARD</h3>
   <table>
     <tr><td>Kills</td><td id="sb-kills">0</td></tr>
+    <tr><td>Assists</td><td id="sb-assists">0</td></tr>
     <tr><td>Deaths</td><td id="sb-deaths">0</td></tr>
     <tr><td>Money</td><td id="sb-money">$800</td></tr>
     <tr><td>Weapon</td><td id="sb-weapon">Kestrel P9</td></tr>
